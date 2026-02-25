@@ -1,0 +1,15 @@
+---
+description: Python coding standards for Expense Tracker
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python Standards
+
+- Use Python 3.10+ syntax (e.g. `tuple[int, int] | None`, `list[str]`).
+- Prefer type hints on public function signatures and return values.
+- Use a single, short docstring for each public function or module (what it does, not how).
+- Prefer `snake_case` for functions and variables; `UPPER_SNAKE` for module-level constants.
+- Keep shared column names and literal lists in one place (e.g. `constants.TRANSACTION_COLUMNS`); do not duplicate across modules.
+- Use `pd.DataFrame` for tabular data; avoid passing raw dicts/lists when the schema is fixed.
+- Catch narrow exceptions where possible; avoid bare `except:`.

@@ -1,0 +1,13 @@
+---
+description: Expense Tracker module layout and boundaries
+alwaysApply: true
+---
+
+# Project Structure
+
+- **app.py** (root): Entry point only. Imports and runs `src.ui.app.main()`. Run with `streamlit run app.py`.
+- **src/ui/app.py**: Streamlit UI only. Imports from `src.core` and `src.services`. No business logic for parsing or filtering.
+- **src/services/pdf_parser.py**: PDF extraction and table normalization. Returns DataFrames with columns from `src.core.constants.TRANSACTION_COLUMNS`. No Streamlit or filter logic.
+- **src/core/filter_rules.py**: All exclusion/inclusion rules and `apply_*` functions. Operates on DataFrames with configurable column names. No PDF or UI code.
+- **src/core/constants.py**: Shared literals (e.g. `TRANSACTION_COLUMNS`). No logic.
+- Add new features in the appropriate layer: UI in `src/ui`, rules/constants in `src/core`, I/O (e.g. PDF) in `src/services`.

@@ -1,0 +1,9 @@
+# Project-level Streamlit config.
+# Use this so Streamlit does not need to write to ~/.streamlit (avoids permission errors in restricted environments).
+
+[browser]
+gatherUsageStats = false
+
+[server]
+# Optional: uncomment to run headless (e.g. in CI)
+# headless = true

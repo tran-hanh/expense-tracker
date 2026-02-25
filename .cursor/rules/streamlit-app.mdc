@@ -1,0 +1,13 @@
+---
+description: Streamlit app structure and session state conventions
+globs: "**/app.py"
+alwaysApply: false
+---
+
+# Streamlit App Conventions
+
+- Initialize all session state keys in one function (e.g. `init_session_state`) and call it at the start of `main()`.
+- Put file uploaders and filters in the sidebar; use `st.sidebar` for those widgets.
+- Split the main script into small functions: sidebar inputs, data load/filter, KPI render, table renders. Keep `main()` as a short orchestrator.
+- Use `st.data_editor` for tables that need user edits (e.g. checkboxes); persist edits back to `st.session_state` so the next run reflects them.
+- When a metric depends on widget state (e.g. checkboxes), store the computed value in session state and use it for the displayed metric so it updates after reruns.
