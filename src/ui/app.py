@@ -106,7 +106,7 @@ def _cache_key(files: list[tuple[bytes, str]]) -> tuple[tuple[int, str], ...]:
 
 
 @st.cache_data(show_spinner=False)
-def _load_pdfs_cached(_key: tuple, files: list[tuple[bytes, str]]) -> tuple[pd.DataFrame, list[int]]:
+def _load_pdfs_cached(_key: tuple, files: list[tuple[bytes, str]]) -> tuple[pd.DataFrame, list[tuple[int, str]]]:
     """Cached PDF loading; _key is content-based so same uploads avoid re-parsing."""
     return load_pdfs_to_dataframe(files)
 
@@ -118,18 +118,20 @@ def ensure_raw_all_loaded(files_with_type: list[tuple[bytes, str]]) -> bool:
     """
     if files_with_type:
         with st.spinner("Parsing PDFs..."):
-            raw_all, failed_indices = _load_pdfs_cached(_cache_key(files_with_type), files_with_type)
-        if failed_indices:
+            raw_all, failed = _load_pdfs_cached(_cache_key(files_with_type), files_with_type)
+        if failed:
+            details = " — ".join(f"File {i + 1}: {msg}" for i, msg in failed)
             st.warning(
-                f"Could not parse {len(failed_indices)} file(s) (index {failed_indices}). "
-                "Check that they are valid Techcombank statement PDFs."
+                f"**Could not parse {len(failed)} file(s).** {details} "
+                "Check that the files are valid Techcombank statement PDFs (checking or credit card)."
             )
         st.session_state.raw_all = raw_all
         if raw_all.empty:
-            st.warning(
-                "No transactions extracted from the uploaded PDFs. "
-                "Check that the files are valid Techcombank statement PDFs."
-            )
+            if not failed:
+                st.warning(
+                    "No transactions extracted from the uploaded PDFs. "
+                    "Check that the files are valid Techcombank statement PDFs."
+                )
             st.session_state.raw_all = None
             return False
     return st.session_state.raw_all is not None and not st.session_state.raw_all.empty

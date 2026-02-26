@@ -109,3 +109,75 @@ def test_apply_all_rules_global_and_month_specific():
     assert "Regular" in valid["Description"].iloc[0]
     assert len(excluded) == 1
     assert "VO THI HONG" in excluded["Description"].iloc[0]
+
+
+def test_apply_custom_exclusions_ignores_empty_parts():
+    """Comma-separated text with empty/whitespace parts should skip those."""
+    df = pd.DataFrame(
+        {"Description": ["Pay A", "Pay B"], "Debit": [1.0, 2.0]}
+    )
+    inc, excl = apply_custom_exclusions(df, "Description", "Debit", "  ,  Pay A  , ")
+    assert len(excl) == 1
+    assert "Pay A" in excl["Description"].iloc[0]
+
+
+def test_apply_custom_exclusions_exact_amount_match():
+    """Custom exclusion can match by exact amount (e.g. 15.000.000 or 15000000)."""
+    df = pd.DataFrame(
+        {"Description": ["Tx1", "Tx2"], "Debit": [15_000_000.0, 20_000.0]}
+    )
+    inc, excl = apply_custom_exclusions(df, "Description", "Debit", "15.000.000")
+    assert len(excl) == 1
+    assert excl["Debit"].iloc[0] == 15_000_000.0
+
+
+def test_apply_custom_exclusions_keyword_match_in_description():
+    """Custom exclusion matches when keyword appears in description."""
+    df = pd.DataFrame(
+        {"Description": ["tra tien nha", "Other"], "Debit": [5_000.0, 6_000.0]}
+    )
+    inc, excl = apply_custom_exclusions(df, "Description", "Debit", "tien nha")
+    assert len(excl) == 1
+    assert "tra tien nha" in excl["Description"].iloc[0]
+
+
+def test_apply_custom_exclusions_empty_text_returns_unchanged():
+    """Empty or whitespace-only custom text returns (df.copy(), empty excluded)."""
+    df = pd.DataFrame({"Description": ["A"], "Debit": [1.0]})
+    inc, excl = apply_custom_exclusions(df, "Description", "Debit", "")
+    assert len(inc) == 1 and len(excl) == 0
+    inc2, excl2 = apply_custom_exclusions(df, "Description", "Debit", "   ")
+    assert len(inc2) == 1 and len(excl2) == 0
+
+
+def test_apply_month_specific_exclusions_month_with_no_rules():
+    """Month not in MONTH_SPECIFIC_EXCLUSIONS returns all included."""
+    df = pd.DataFrame(
+        {"Description": ["Any text"], "Debit": [100_000.0]}
+    )
+    inc, excl = apply_month_specific_exclusions(df, 2024, 6, "Description")
+    assert len(inc) == 1
+    assert excl.empty
+
+
+def test_apply_global_exclusions_description_contains_nan():
+    """Rows with NaN description don't match keyword and aren't excluded by keyword."""
+    df = pd.DataFrame(
+        {"Description": [pd.NA, "PHAT LOC REAL ESTATE"], "Debit": [10_000.0, 10_000.0]}
+    )
+    inc, excl = apply_global_exclusions(df, "Description", "Debit")
+    assert len(inc) == 1
+    assert pd.isna(inc["Description"].iloc[0])
+    assert len(excl) == 1
+    assert "PHAT LOC" in excl["Description"].iloc[0]
+
+
+def test_apply_custom_exclusions_part_looks_like_number_but_invalid():
+    """Custom part that fails float() (e.g. '12-34') falls through to keyword match or no match."""
+    df = pd.DataFrame(
+        {"Description": ["Payment 12-34", "Other"], "Debit": [1.0, 2.0]}
+    )
+    # "12-34" strips to "12-34"; num_str = "12-34"; float("12-34") raises ValueError
+    inc, excl = apply_custom_exclusions(df, "Description", "Debit", "12-34")
+    assert len(excl) == 1
+    assert "12-34" in excl["Description"].iloc[0]

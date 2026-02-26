@@ -274,42 +274,46 @@ def extract_transactions_from_pdf(
     # Keep rows with non-zero Debit (outflows and refunds)
     df = df[df["Debit"] != 0].copy()
     df["SourceType"] = source_type
-    return df[TRANSACTION_COLUMNS]
+    return df[list(TRANSACTION_COLUMNS)]
 
 
 def load_pdfs_to_dataframe(
     files: list[tuple[bytes, Literal["checking", "credit_card"]]],
     deduplicate: bool = True,
-) -> tuple[pd.DataFrame, list[int]]:
+) -> tuple[pd.DataFrame, list[tuple[int, str]]]:
     """
     Load multiple PDFs and concatenate into one DataFrame.
     files: list of (pdf_bytes, source_type).
-    Returns (dataframe, failed_file_indices). Failed files are logged and skipped; callers can surface failed_indices.
+    Returns (dataframe, failed_files) where failed_files is list of (index, error_message) for callers to display.
     If deduplicate is True, drops duplicate rows (Date, Description, Debit, Credit, SourceType).
     """
     if not files:
         return pd.DataFrame(columns=TRANSACTION_COLUMNS), []
     dfs = []
-    failed_indices: list[int] = []
+    failed: list[tuple[int, str]] = []
     for i, (pdf_bytes, source_type) in enumerate(files):
         try:
             if not isinstance(pdf_bytes, bytes) or not pdf_bytes:
-                logger.warning("File index %s: invalid pdf_bytes (type=%s, len=%s)", i, type(pdf_bytes).__name__, len(pdf_bytes) if pdf_bytes else 0)
-                failed_indices.append(i)
+                msg = f"Invalid or empty file (got {type(pdf_bytes).__name__})"
+                logger.warning("File index %s: %s", i, msg)
+                failed.append((i, msg))
                 continue
             df = extract_transactions_from_pdf(pdf_bytes, source_type=source_type)
             if not df.empty:
                 dfs.append(df)
+            else:
+                failed.append((i, "No transaction table found or no debit rows in this PDF"))
         except Exception as e:
+            msg = str(e).strip() or type(e).__name__
             logger.warning("File index %s failed to parse: %s", i, e)
-            failed_indices.append(i)
+            failed.append((i, msg))
             continue
     if not dfs:
-        return pd.DataFrame(columns=TRANSACTION_COLUMNS), failed_indices
+        return pd.DataFrame(columns=TRANSACTION_COLUMNS), failed
     out = pd.concat(dfs, ignore_index=True)
     if deduplicate and not out.empty:
         out = out.drop_duplicates(
             subset=["Date", "Description", "Debit", "Credit", "SourceType"],
             keep="first",
         ).reset_index(drop=True)
-    return out, failed_indices
+    return out, failed
