@@ -32,7 +32,7 @@ def format_vnd(value: float) -> str:
     """Format number as Vietnamese currency (e.g. 10,000,000 VND)."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return "0 VND"
-    return f"{int(value):,} VND".replace(",", ",")
+    return f"{int(value):,} VND"
 
 
 def parse_month_year_filter(option: str) -> tuple[int, int] | None:
@@ -50,8 +50,9 @@ def parse_month_year_filter(option: str) -> tuple[int, int] | None:
 
 def get_month_options() -> list[str]:
     """Build list of month/year options for the dropdown (from raw_all or defaults)."""
-    if st.session_state.raw_all is not None and not st.session_state.raw_all.empty:
-        df = st.session_state.raw_all.copy()
+    raw = st.session_state.raw_all
+    if raw is not None and not raw.empty and "Date" in raw.columns:
+        df = raw.copy()
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         dates = df["Date"].dropna()
         if not dates.empty:
@@ -99,6 +100,17 @@ def get_sidebar_inputs() -> tuple[list[tuple[bytes, str]], str]:
     return files_with_type, custom_exclusions or ""
 
 
+def _cache_key(files: list[tuple[bytes, str]]) -> tuple[tuple[int, str], ...]:
+    """Stable cache key from file content hashes and types (for st.cache_data)."""
+    return tuple((hash(b), t) for b, t in files)
+
+
+@st.cache_data(show_spinner=False)
+def _load_pdfs_cached(_key: tuple, files: list[tuple[bytes, str]]) -> tuple[pd.DataFrame, list[int]]:
+    """Cached PDF loading; _key is content-based so same uploads avoid re-parsing."""
+    return load_pdfs_to_dataframe(files)
+
+
 def ensure_raw_all_loaded(files_with_type: list[tuple[bytes, str]]) -> bool:
     """
     If there are new uploads, parse PDFs and set session_state.raw_all.
@@ -106,7 +118,12 @@ def ensure_raw_all_loaded(files_with_type: list[tuple[bytes, str]]) -> bool:
     """
     if files_with_type:
         with st.spinner("Parsing PDFs..."):
-            raw_all = load_pdfs_to_dataframe(files_with_type)
+            raw_all, failed_indices = _load_pdfs_cached(_cache_key(files_with_type), files_with_type)
+        if failed_indices:
+            st.warning(
+                f"Could not parse {len(failed_indices)} file(s) (index {failed_indices}). "
+                "Check that they are valid Techcombank statement PDFs."
+            )
         st.session_state.raw_all = raw_all
         if raw_all.empty:
             st.warning(
@@ -129,6 +146,9 @@ def load_and_filter_data(
     """
     raw_all = st.session_state.raw_all
     if raw_all is None or raw_all.empty:
+        return st.session_state.valid_df, st.session_state.excluded_df
+    if "Date" not in raw_all.columns:
+        st.error("Transaction data is missing the Date column. Re-upload valid statement PDFs.")
         return st.session_state.valid_df, st.session_state.excluded_df
 
     raw_all = raw_all.copy()
@@ -178,12 +198,16 @@ def render_kpis(valid_df: pd.DataFrame, display_total: float) -> None:
 
 def render_valid_expenses_table(valid_df: pd.DataFrame) -> None:
     """Render interactive Valid Expenses table with Count as Expense checkbox; persist state and update display_total."""
+    required = {"Debit", "Credit", "Date", "Description"}
+    if not required.issubset(valid_df.columns):
+        st.error(f"Valid expenses table is missing columns: {required - set(valid_df.columns)}. Cannot render.")
+        return
     st.subheader("Valid Expenses")
     st.caption("Uncheck 'Count as Expense' to exclude a row from the Total Monthly Expense.")
     display_valid = valid_df.copy()
-    display_valid["Debit (VND)"] = display_valid["Debit"].apply(lambda x: f"{int(x):,}".replace(",", ","))
+    display_valid["Debit (VND)"] = display_valid["Debit"].apply(lambda x: f"{int(x):,}")
     display_valid["Credit (VND)"] = display_valid["Credit"].apply(
-        lambda x: f"{int(x):,}".replace(",", ",") if x and x > 0 else ""
+        lambda x: f"{int(x):,}" if x and x > 0 else ""
     )
     cols_show = [c for c in ["Count as Expense", "Date", "Description", "Debit (VND)", "Credit (VND)", "SourceType"] if c in display_valid.columns]
     edited = st.data_editor(
@@ -213,11 +237,17 @@ def render_excluded_table(excluded_df: pd.DataFrame | None) -> None:
     st.subheader("Excluded Transactions")
     st.caption("Transactions ignored by the filtering rules (for transparency).")
     if excluded_df is not None and not excluded_df.empty:
+        required = {"Debit", "Date", "Description"}
+        if not required.issubset(excluded_df.columns):
+            st.warning(f"Excluded table is missing columns: {required - set(excluded_df.columns)}. Showing raw table.")
+            st.dataframe(excluded_df, use_container_width=True)
+            return
         display_excluded = excluded_df.copy()
-        display_excluded["Debit (VND)"] = display_excluded["Debit"].apply(lambda x: f"{int(x):,}".replace(",", ","))
+        display_excluded["Debit (VND)"] = display_excluded["Debit"].apply(lambda x: f"{int(x):,}")
         display_excluded["Date"] = pd.to_datetime(display_excluded["Date"], errors="coerce")
+        disp_cols = [c for c in ["Date", "Description", "Debit (VND)", "SourceType"] if c in display_excluded.columns]
         st.dataframe(
-            display_excluded[["Date", "Description", "Debit (VND)", "SourceType"]],
+            display_excluded[disp_cols],
             use_container_width=True,
             column_config={
                 "Date": st.column_config.DatetimeColumn("Date", format="DD/MM/YYYY"),

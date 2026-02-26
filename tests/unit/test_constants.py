@@ -4,8 +4,8 @@ import pytest
 from src.core.constants import TRANSACTION_COLUMNS
 
 
-def test_transaction_columns_is_list():
-    assert isinstance(TRANSACTION_COLUMNS, list)
+def test_transaction_columns_is_immutable_tuple():
+    assert isinstance(TRANSACTION_COLUMNS, tuple)
 
 
 def test_transaction_columns_has_required_columns():

@@ -10,19 +10,20 @@ from src.services.pdf_parser import (
 
 
 def test_load_pdfs_to_dataframe_empty():
-    result = load_pdfs_to_dataframe([])
-    assert isinstance(result, pd.DataFrame)
-    assert result.empty
-    assert list(result.columns) == list(TRANSACTION_COLUMNS)
+    df, failed = load_pdfs_to_dataframe([])
+    assert isinstance(df, pd.DataFrame)
+    assert df.empty
+    assert list(df.columns) == list(TRANSACTION_COLUMNS)
+    assert failed == []
 
 
 def test_load_pdfs_to_dataframe_deduplicate():
     # Two identical in-memory "PDFs" that yield no rows (invalid bytes) are skipped;
     # use empty list to test deduplicate path with no rows.
-    result = load_pdfs_to_dataframe([], deduplicate=True)
-    assert result.empty
-    result = load_pdfs_to_dataframe([], deduplicate=False)
-    assert result.empty
+    df, _ = load_pdfs_to_dataframe([], deduplicate=True)
+    assert df.empty
+    df, _ = load_pdfs_to_dataframe([], deduplicate=False)
+    assert df.empty
 
 
 def test_extract_transactions_from_pdf_rejects_non_bytes():
@@ -38,6 +39,7 @@ def test_extract_transactions_from_pdf_rejects_empty_bytes():
 
 
 def test_load_pdfs_to_dataframe_returns_expected_columns():
-    """Empty loader returns DataFrame with TRANSACTION_COLUMNS."""
-    result = load_pdfs_to_dataframe([])
-    assert list(result.columns) == list(TRANSACTION_COLUMNS)
+    """Empty loader returns DataFrame with TRANSACTION_COLUMNS and failed list."""
+    df, failed = load_pdfs_to_dataframe([])
+    assert list(df.columns) == list(TRANSACTION_COLUMNS)
+    assert failed == []

@@ -59,6 +59,7 @@ def _parse_vnd_amount(val) -> float:
     try:
         return -float(s) if negative else float(s)
     except ValueError:
+        logger.debug("VND amount parse failed for %r, treating as 0", val)
         return 0.0
 
 
@@ -80,12 +81,12 @@ def _parse_date(val, day_first: bool = True) -> pd.Timestamp | None:
         d, mo = (g1, g2) if day_first else (g2, g1)
         try:
             return pd.Timestamp(year=y, month=mo, day=d)
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             logger.debug("Date parse failed for %r: %s", val, e)
             return None
     try:
         return pd.to_datetime(val)
-    except Exception as e:
+    except (ValueError, TypeError) as e:
         logger.debug("Date parse failed for %r: %s", val, e)
         return None
 
@@ -228,10 +229,11 @@ def extract_transactions_from_pdf(
                 continue
             headers = raw[0]
             col_map = _map_headers(headers)
-            # Continuation pages may have no header row or different header text; reuse previous page's map if column count matches
+            # Continuation pages may have no header row; reuse previous page's map if column count matches.
+            # Layout is assumed identical—reordered columns would misassign data; we log for visibility.
             ncols = len(headers) if headers else 0
             if not col_map and last_col_map and ncols >= len(last_col_map):
-                # Use last page's column indices (assume same layout)
+                logger.debug("Reusing previous page column map for continuation page (ncols=%s)", ncols)
                 col_map = {i: last_col_map[i] for i in last_col_map if i < ncols}
             if not col_map:
                 continue
@@ -278,33 +280,36 @@ def extract_transactions_from_pdf(
 def load_pdfs_to_dataframe(
     files: list[tuple[bytes, Literal["checking", "credit_card"]]],
     deduplicate: bool = True,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, list[int]]:
     """
     Load multiple PDFs and concatenate into one DataFrame.
     files: list of (pdf_bytes, source_type).
-    On parse failure for a file, logs a warning and skips that file.
+    Returns (dataframe, failed_file_indices). Failed files are logged and skipped; callers can surface failed_indices.
     If deduplicate is True, drops duplicate rows (Date, Description, Debit, Credit, SourceType).
     """
     if not files:
-        return pd.DataFrame(columns=TRANSACTION_COLUMNS)
+        return pd.DataFrame(columns=TRANSACTION_COLUMNS), []
     dfs = []
+    failed_indices: list[int] = []
     for i, (pdf_bytes, source_type) in enumerate(files):
         try:
             if not isinstance(pdf_bytes, bytes) or not pdf_bytes:
                 logger.warning("File index %s: invalid pdf_bytes (type=%s, len=%s)", i, type(pdf_bytes).__name__, len(pdf_bytes) if pdf_bytes else 0)
+                failed_indices.append(i)
                 continue
             df = extract_transactions_from_pdf(pdf_bytes, source_type=source_type)
             if not df.empty:
                 dfs.append(df)
         except Exception as e:
             logger.warning("File index %s failed to parse: %s", i, e)
+            failed_indices.append(i)
             continue
     if not dfs:
-        return pd.DataFrame(columns=TRANSACTION_COLUMNS)
+        return pd.DataFrame(columns=TRANSACTION_COLUMNS), failed_indices
     out = pd.concat(dfs, ignore_index=True)
     if deduplicate and not out.empty:
         out = out.drop_duplicates(
             subset=["Date", "Description", "Debit", "Credit", "SourceType"],
             keep="first",
         ).reset_index(drop=True)
-    return out
+    return out, failed_indices

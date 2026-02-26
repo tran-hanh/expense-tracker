@@ -46,7 +46,7 @@ def test_apply_month_specific_exclusions_dec_2025():
             "Debit": [42_500_000.0, 100_000.0],
         }
     )
-    inc, excl = apply_month_specific_exclusions(df, 2025, 12, "Description", "Debit")
+    inc, excl = apply_month_specific_exclusions(df, 2025, 12, "Description")
     assert len(excl) == 1
     assert "VO THI HONG" in excl["Description"].iloc[0]
     assert len(inc) == 1

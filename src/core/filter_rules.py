@@ -1,6 +1,7 @@
 """
 Filtering rules for bank statement expense analysis.
-Rule 3.1: Global exclusions, Rule 3.2: Global inclusions, Rule 3.3: Month-specific exclusions.
+Rule 3.1: Global exclusions. Rule 3.3: Month-specific exclusions.
+(Rule 3.2 global inclusions reserved for future use.)
 """
 
 import re
@@ -17,13 +18,6 @@ GLOBAL_EXCLUSION_KEYWORDS = [
     "team bonding",
     "HOAN TRA LCT",
     "Thanh toan no the tin dung",
-]
-
-# Rule 3.2: Global inclusion keywords (explicitly count as expenses)
-GLOBAL_INCLUSION_KEYWORDS = [
-    "SHOPEEPAY",
-    "M SERVICE JSC",  # MoMo
-    "TRAN HIEU HANH chuyen tien",
 ]
 
 # Rule 3.3: Month-specific exclusions: (year, month) -> list of keywords.
@@ -99,7 +93,7 @@ def apply_global_exclusions(df: pd.DataFrame, desc_col: str, amount_col: str) ->
 
 
 def apply_month_specific_exclusions(
-    df: pd.DataFrame, year: int, month: int, desc_col: str, amount_col: str
+    df: pd.DataFrame, year: int, month: int, desc_col: str
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Apply Rule 3.3: exclude transactions whose description contains any month-specific keyword.
@@ -157,7 +151,7 @@ def apply_all_rules(
     all_excluded.append(excl1)
 
     # 2. Month-specific
-    current, excl2 = apply_month_specific_exclusions(current, year, month, desc_col, amount_col)
+    current, excl2 = apply_month_specific_exclusions(current, year, month, desc_col)
     all_excluded.append(excl2)
 
     # 3. Custom
