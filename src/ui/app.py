@@ -186,24 +186,31 @@ def load_and_filter_data(
     return valid, excluded
 
 
-def render_kpis(valid_df: pd.DataFrame, display_total: float) -> None:
+def render_kpis(display_total: float, credit_card_total: float) -> None:
     """Render Top KPI cards: Total Monthly Expense and Total Credit Card Expense."""
-    credit_card_expense = valid_df[valid_df["SourceType"] == "credit_card"]["Debit"].sum()
     k1, k2 = st.columns(2)
     with k1:
         st.metric("Total Monthly Expense", format_vnd(display_total))
     with k2:
-        st.metric("Total Credit Card Expense", format_vnd(credit_card_expense))
+        st.metric("Total Credit Card Expense", format_vnd(credit_card_total))
 
 
-def render_valid_expenses_table(valid_df: pd.DataFrame) -> None:
-    """Render interactive Valid Expenses table with Count as Expense checkbox; persist state and update display_total."""
+@st.fragment
+def _render_expense_editor_and_totals() -> None:
+    """
+    Fragment: only this block reruns when checkboxes change, so the total updates
+    instantly without reloading the whole page (sidebar, month filter, etc.).
+    Requires Streamlit >= 1.33.0.
+    """
+    valid_df = st.session_state.valid_df
+    if valid_df is None or valid_df.empty:
+        return
     required = {"Debit", "Credit", "Date", "Description"}
     if not required.issubset(valid_df.columns):
         st.error(f"Valid expenses table is missing columns: {required - set(valid_df.columns)}. Cannot render.")
         return
     st.subheader("Valid Expenses")
-    st.caption("Uncheck 'Count as Expense' to exclude a row from the Total Monthly Expense.")
+    st.caption("Uncheck 'Count as Expense' to exclude a row from the total. Totals update immediately.")
     display_valid = valid_df.copy()
     display_valid["Debit (VND)"] = display_valid["Debit"].apply(lambda x: f"{int(x):,}")
     display_valid["Credit (VND)"] = display_valid["Credit"].apply(
@@ -223,13 +230,20 @@ def render_valid_expenses_table(valid_df: pd.DataFrame) -> None:
         },
         key="valid_expenses_editor",
     )
-    if "Count as Expense" in edited.columns:
-        mask = edited["Count as Expense"].fillna(True).values
-        if len(mask) == len(valid_df):
-            st.session_state.valid_df["Count as Expense"] = mask
-            total_from_checkboxes = valid_df["Debit"].values[mask].sum()
-            st.session_state.display_total = total_from_checkboxes
-            st.caption(f"**Total from checked rows:** {format_vnd(total_from_checkboxes)}")
+    if "Count as Expense" not in edited.columns:
+        return
+    mask = edited["Count as Expense"].fillna(True).values
+    if len(mask) != len(valid_df):
+        return
+    st.session_state.valid_df["Count as Expense"] = mask
+    total_from_checkboxes = valid_df["Debit"].values[mask].sum()
+    st.session_state.display_total = total_from_checkboxes
+    # Credit card total from checked rows only
+    is_cc = (valid_df["SourceType"] == "credit_card").values
+    credit_card_total = valid_df["Debit"].values[mask & is_cc].sum()
+    # Show totals right below the table so they update in place
+    st.caption(f"**Total from checked rows:** {format_vnd(total_from_checkboxes)}")
+    render_kpis(total_from_checkboxes, credit_card_total)
 
 
 def render_excluded_table(excluded_df: pd.DataFrame | None) -> None:
@@ -287,19 +301,16 @@ def main() -> None:
         st.info("No valid expenses for the selected period. Try another month from the dropdown, or upload Checking and/or Credit card PDFs.")
         return
 
-    total_monthly_expense = (
-        valid_df.loc[valid_df["Count as Expense"].fillna(True), "Debit"].sum()
-        if "Count as Expense" in valid_df.columns
-        else valid_df["Debit"].sum()
-    )
-
     st.divider()
-    # Render table first so checkbox state is available; then KPI uses current run's total
-    render_valid_expenses_table(valid_df)
-    display_total = (
-        st.session_state.display_total
-        if st.session_state.display_total is not None
-        else total_monthly_expense
-    )
-    render_kpis(valid_df, display_total)
+    # Fragment: table + totals rerun only when checkboxes change → fast, no full-page refresh
+    _render_expense_editor_and_totals()
+    # If fragment didn't run (e.g. old Streamlit), show KPIs from session total
+    if st.session_state.display_total is None:
+        total = (
+            valid_df.loc[valid_df["Count as Expense"].fillna(True), "Debit"].sum()
+            if "Count as Expense" in valid_df.columns
+            else valid_df["Debit"].sum()
+        )
+        cc_total = valid_df[valid_df["SourceType"] == "credit_card"]["Debit"].sum()
+        render_kpis(total, cc_total)
     render_excluded_table(excluded_df)
