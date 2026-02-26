@@ -219,7 +219,7 @@ def _render_expense_editor_and_totals() -> None:
         lambda x: f"{int(x):,}" if x and x > 0 else ""
     )
     cols_show = [c for c in ["Count as Expense", "Date", "Description", "Debit (VND)", "Credit (VND)", "SourceType"] if c in display_valid.columns]
-    edited = st.data_editor(
+    st.data_editor(
         display_valid[cols_show],
         use_container_width=True,
         column_config={
@@ -232,6 +232,8 @@ def _render_expense_editor_and_totals() -> None:
         },
         key="valid_expenses_editor",
     )
+    # Use session state for checkbox state: in fragments the return value can be one run behind
+    edited = st.session_state.get("valid_expenses_editor", display_valid[cols_show])
     if "Count as Expense" not in edited.columns:
         return
     mask = edited["Count as Expense"].fillna(True).values
