@@ -8,7 +8,12 @@ import re
 import pandas as pd
 import streamlit as st
 
-from src.core.constants import TRANSACTION_COLUMNS
+from src.core.constants import (
+    EXCLUDED_TABLE_DISPLAY_COLUMNS,
+    REQUIRED_VALID_EXPENSE_COLUMNS,
+    TRANSACTION_COLUMNS,
+    VALID_EXPENSE_DISPLAY_COLUMNS,
+)
 from src.core.filter_rules import apply_all_rules
 from src.services.pdf_parser import load_pdfs_to_dataframe
 
@@ -33,6 +38,13 @@ def format_vnd(value: float) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return "0 VND"
     return f"{int(value):,} VND"
+
+
+def _format_cell_vnd(value: float) -> str:
+    """Format a single numeric cell for table display (thousands separator, no unit)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return f"{int(value):,}"
 
 
 def parse_month_year_filter(option: str) -> tuple[int, int] | None:
@@ -62,7 +74,8 @@ def get_month_options() -> list[str]:
                 reverse=True,
             )
             return [f"{ts.month:02d}/{ts.year}" for ts in periods]
-    return [f"{m:02d}/{y}" for y in [2026, 2025] for m in range(12, 0, -1)]
+    _default_years = (2026, 2025)
+    return [f"{m:02d}/{y}" for y in _default_years for m in range(12, 0, -1)]
 
 
 def get_sidebar_inputs() -> tuple[list[tuple[bytes, str]], str]:
@@ -197,31 +210,46 @@ def render_kpis(display_total: float, credit_card_total: float) -> None:
         st.metric("Total Credit Card Expense", format_vnd(credit_card_total))
 
 
-@st.fragment
+def _totals_from_count_as_expense_mask(
+    valid_df: pd.DataFrame, mask: pd.Series | None
+) -> tuple[float, float]:
+    """
+    Compute (total_monthly_expense, credit_card_expense) from valid_df and Count-as-Expense mask.
+    mask: True = count row, False = exclude. Same length as valid_df. Used by UI and tests.
+    """
+    if mask is None or len(mask) != len(valid_df):
+        mask_arr = pd.Series(True, index=valid_df.index)
+    else:
+        mask_arr = pd.Series(mask, index=valid_df.index).fillna(True).astype(bool)
+    total = (valid_df["Debit"].values * mask_arr.values).sum()
+    is_cc = (valid_df["SourceType"] == "credit_card").values
+    cc_total = (valid_df["Debit"].values * (mask_arr.values & is_cc)).sum()
+    return float(total), float(cc_total)
+
+
 def _render_expense_editor_and_totals() -> None:
     """
-    Fragment: only this block reruns when checkboxes change, so the total updates
-    instantly without reloading the whole page (sidebar, month filter, etc.).
-    Requires Streamlit >= 1.33.0.
+    Render Valid Expenses table and KPIs. Uses data_editor return value so total updates
+    on first checkbox change (no fragment = full rerun with current widget value).
     """
     valid_df = st.session_state.valid_df
     if valid_df is None or valid_df.empty:
         return
-    required = {"Debit", "Credit", "Date", "Description"}
-    if not required.issubset(valid_df.columns):
-        st.error(f"Valid expenses table is missing columns: {required - set(valid_df.columns)}. Cannot render.")
+    if not REQUIRED_VALID_EXPENSE_COLUMNS.issubset(valid_df.columns):
+        missing = REQUIRED_VALID_EXPENSE_COLUMNS - set(valid_df.columns)
+        st.error(f"Valid expenses table is missing columns: {missing}. Cannot render.")
         return
     st.subheader("Valid Expenses")
-    st.caption("Uncheck 'Count as Expense' to exclude a row from the total. Totals update immediately.")
+    st.caption("Uncheck 'Count as Expense' to exclude a row from the total.")
     display_valid = valid_df.copy()
-    display_valid["Debit (VND)"] = display_valid["Debit"].apply(lambda x: f"{int(x):,}")
+    display_valid["Debit (VND)"] = display_valid["Debit"].apply(_format_cell_vnd)
     display_valid["Credit (VND)"] = display_valid["Credit"].apply(
-        lambda x: f"{int(x):,}" if x and x > 0 else ""
+        lambda x: _format_cell_vnd(x) if x and x > 0 else ""
     )
-    cols_show = [c for c in ["Count as Expense", "Date", "Description", "Debit (VND)", "Credit (VND)", "SourceType"] if c in display_valid.columns]
-    st.data_editor(
-        display_valid[cols_show],
-        use_container_width=True,
+    display_columns = [c for c in VALID_EXPENSE_DISPLAY_COLUMNS if c in display_valid.columns]
+    edited_returned = st.data_editor(
+        display_valid[display_columns],
+        width="stretch",
         column_config={
             "Count as Expense": st.column_config.CheckboxColumn("Count as Expense", default=True),
             "Date": st.column_config.DatetimeColumn("Date", format="DD/MM/YYYY"),
@@ -232,20 +260,15 @@ def _render_expense_editor_and_totals() -> None:
         },
         key="valid_expenses_editor",
     )
-    # Use session state for checkbox state: in fragments the return value can be one run behind
-    edited = st.session_state.get("valid_expenses_editor", display_valid[cols_show])
+    edited = edited_returned if isinstance(edited_returned, pd.DataFrame) else display_valid[display_columns].copy()
     if "Count as Expense" not in edited.columns:
         return
-    mask = edited["Count as Expense"].fillna(True).values
+    mask = edited["Count as Expense"]
     if len(mask) != len(valid_df):
         return
-    st.session_state.valid_df["Count as Expense"] = mask
-    total_from_checkboxes = valid_df["Debit"].values[mask].sum()
+    st.session_state.valid_df["Count as Expense"] = mask.values
+    total_from_checkboxes, credit_card_total = _totals_from_count_as_expense_mask(valid_df, mask)
     st.session_state.display_total = total_from_checkboxes
-    # Credit card total from checked rows only
-    is_cc = (valid_df["SourceType"] == "credit_card").values
-    credit_card_total = valid_df["Debit"].values[mask & is_cc].sum()
-    # Show totals right below the table so they update in place
     st.caption(f"**Total from checked rows:** {format_vnd(total_from_checkboxes)}")
     render_kpis(total_from_checkboxes, credit_card_total)
 
@@ -255,18 +278,18 @@ def render_excluded_table(excluded_df: pd.DataFrame | None) -> None:
     st.subheader("Excluded Transactions")
     st.caption("Transactions ignored by the filtering rules (for transparency).")
     if excluded_df is not None and not excluded_df.empty:
-        required = {"Debit", "Date", "Description"}
-        if not required.issubset(excluded_df.columns):
-            st.warning(f"Excluded table is missing columns: {required - set(excluded_df.columns)}. Showing raw table.")
-            st.dataframe(excluded_df, use_container_width=True)
+        required_excluded = {"Debit", "Date", "Description"}
+        if not required_excluded.issubset(excluded_df.columns):
+            st.warning(f"Excluded table is missing columns: {required_excluded - set(excluded_df.columns)}. Showing raw table.")
+            st.dataframe(excluded_df, width="stretch")
             return
         display_excluded = excluded_df.copy()
-        display_excluded["Debit (VND)"] = display_excluded["Debit"].apply(lambda x: f"{int(x):,}")
+        display_excluded["Debit (VND)"] = display_excluded["Debit"].apply(_format_cell_vnd)
         display_excluded["Date"] = pd.to_datetime(display_excluded["Date"], errors="coerce")
-        disp_cols = [c for c in ["Date", "Description", "Debit (VND)", "SourceType"] if c in display_excluded.columns]
+        disp_cols = [c for c in EXCLUDED_TABLE_DISPLAY_COLUMNS if c in display_excluded.columns]
         st.dataframe(
             display_excluded[disp_cols],
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "Date": st.column_config.DatetimeColumn("Date", format="DD/MM/YYYY"),
                 "Description": st.column_config.TextColumn("Description", width="large"),
@@ -306,9 +329,8 @@ def main() -> None:
         return
 
     st.divider()
-    # Fragment: table + totals rerun only when checkboxes change → fast, no full-page refresh
     _render_expense_editor_and_totals()
-    # If fragment didn't run (e.g. old Streamlit), show KPIs from session total
+    # First load: total not yet set by editor; show from valid_df
     if st.session_state.display_total is None:
         total = (
             valid_df.loc[valid_df["Count as Expense"].fillna(True), "Debit"].sum()

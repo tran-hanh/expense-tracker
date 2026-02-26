@@ -10,6 +10,8 @@ import pandas as pd
 
 # --- Constants ---
 MAX_SINGLE_TRANSACTION_VND = 100_000_000
+# Tolerance (VND) for exact amount match in custom exclusions (float comparison)
+AMOUNT_MATCH_TOLERANCE_VND = 1.0
 
 # Rule 3.1: Global exclusion keywords (ignore entirely)
 GLOBAL_EXCLUSION_KEYWORDS = [
@@ -65,7 +67,7 @@ def _matches_custom_exclusion(desc: str, amount: float, custom_parts: list[str])
             num_str = re.sub(r"[^\d\-]", "", part)
             if num_str:
                 num = float(num_str)
-                if amount is not None and abs(float(amount) - num) < 1:
+                if amount is not None and abs(float(amount) - num) < AMOUNT_MATCH_TOLERANCE_VND:
                     return True
         except (ValueError, TypeError):
             pass
@@ -158,7 +160,12 @@ def apply_all_rules(
     current, excl3 = apply_custom_exclusions(current, desc_col, amount_col, custom_exclusions_text)
     all_excluded.append(excl3)
 
-    excluded_combined = pd.concat([e for e in all_excluded if not e.empty], ignore_index=True) if any(not e.empty for e in all_excluded) else pd.DataFrame()
+    has_excluded = any(not e.empty for e in all_excluded)
+    excluded_combined = (
+        pd.concat([e for e in all_excluded if not e.empty], ignore_index=True)
+        if has_excluded
+        else pd.DataFrame()
+    )
     if not excluded_combined.empty and not current.empty:
         # Deduplicate by index if we had same row in multiple steps (use first occurrence)
         excluded_combined = excluded_combined.drop_duplicates(keep="first")

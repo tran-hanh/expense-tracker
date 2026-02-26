@@ -10,10 +10,15 @@ def _import_app_functions():
     """Import app after mocking streamlit so set_page_config and other UI code don't run."""
     with patch.dict(sys.modules, {"streamlit": MagicMock()}):
         from src.ui import app
-        return app.format_vnd, app.parse_month_year_filter, app._cache_key
+        return (
+            app.format_vnd,
+            app.parse_month_year_filter,
+            app._cache_key,
+            app._totals_from_count_as_expense_mask,
+        )
 
 
-format_vnd, parse_month_year_filter, _cache_key = _import_app_functions()
+format_vnd, parse_month_year_filter, _cache_key, _totals_from_count_as_expense_mask = _import_app_functions()
 
 
 def test_format_vnd_none_nan():
@@ -62,3 +67,48 @@ def test_cache_key_stable_by_content():
     assert len(k1) == 2
     assert k1[0][0] == hash(b1) and k1[0][1] == "checking"
     assert k1[1][0] == hash(b2) and k1[1][1] == "credit_card"
+
+
+# --- _totals_from_count_as_expense_mask (simulates "Count as Expense" checkbox logic) ---
+def test_totals_from_mask_all_checked():
+    """All rows counted: total = sum of all Debit."""
+    valid_df = pd.DataFrame({
+        "Debit": [10_000.0, 20_000.0, 30_000.0],
+        "SourceType": ["checking", "checking", "credit_card"],
+    })
+    mask = pd.Series([True, True, True])
+    total, cc_total = _totals_from_count_as_expense_mask(valid_df, mask)
+    assert total == 60_000.0
+    assert cc_total == 30_000.0
+
+
+def test_totals_from_mask_first_row_unchecked():
+    """First row unchecked: total excludes first row (simulates first untick)."""
+    valid_df = pd.DataFrame({
+        "Debit": [10_000.0, 20_000.0, 30_000.0],
+        "SourceType": ["checking", "checking", "credit_card"],
+    })
+    mask = pd.Series([False, True, True])  # first row unticked
+    total, cc_total = _totals_from_count_as_expense_mask(valid_df, mask)
+    assert total == 50_000.0, "Total must update on first untick (exclude 10k)"
+    assert cc_total == 30_000.0
+
+
+def test_totals_from_mask_none_uses_all_true():
+    """None mask: treat as all checked."""
+    valid_df = pd.DataFrame({"Debit": [5.0], "SourceType": ["checking"]})
+    total, cc_total = _totals_from_count_as_expense_mask(valid_df, None)
+    assert total == 5.0
+    assert cc_total == 0.0
+
+
+def test_totals_from_mask_all_unchecked():
+    """All unchecked: total and cc_total are 0."""
+    valid_df = pd.DataFrame({
+        "Debit": [10.0, 20.0],
+        "SourceType": ["checking", "credit_card"],
+    })
+    mask = pd.Series([False, False])
+    total, cc_total = _totals_from_count_as_expense_mask(valid_df, mask)
+    assert total == 0.0
+    assert cc_total == 0.0
