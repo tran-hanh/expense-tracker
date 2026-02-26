@@ -254,6 +254,7 @@ def _render_expense_editor_and_totals() -> None:
             "Count as Expense": st.column_config.CheckboxColumn("Count as Expense", default=True),
             "Date": st.column_config.DatetimeColumn("Date", format="DD/MM/YYYY"),
             "Description": st.column_config.TextColumn("Description", width="large"),
+            "Remitter": st.column_config.TextColumn("Remitter"),
             "Debit (VND)": st.column_config.TextColumn("Debit (VND)"),
             "Credit (VND)": st.column_config.TextColumn("Credit (VND)"),
             "SourceType": st.column_config.TextColumn("Source Type"),
@@ -293,6 +294,7 @@ def render_excluded_table(excluded_df: pd.DataFrame | None) -> None:
             column_config={
                 "Date": st.column_config.DatetimeColumn("Date", format="DD/MM/YYYY"),
                 "Description": st.column_config.TextColumn("Description", width="large"),
+                "Remitter": st.column_config.TextColumn("Remitter"),
             },
         )
     else:

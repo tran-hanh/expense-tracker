@@ -108,8 +108,8 @@ def test_map_headers_empty():
 
 
 def test_map_headers_recognizes_standard_aliases():
-    m = _map_headers(["Date", "Description", "Debit", "Credit"])
-    assert m == {0: "Date", 1: "Description", 2: "Debit", 3: "Credit"}
+    m = _map_headers(["Date", "Description", "Remitter", "Debit", "Credit"])
+    assert m == {0: "Date", 1: "Description", 2: "Remitter", 3: "Debit", 4: "Credit"}
 
 
 def test_map_headers_skips_empty():
@@ -119,11 +119,20 @@ def test_map_headers_skips_empty():
 
 
 def test_map_headers_vietnamese():
-    m = _map_headers(["ngày giao dịch", "nội dung", "ghi nợ", "ghi có"])
+    m = _map_headers(["ngày giao dịch", "nội dung", "đối tác", "ghi nợ", "ghi có"])
     assert m.get(0) == "Date"
     assert m.get(1) == "Description"
-    assert m.get(2) == "Debit"
-    assert m.get(3) == "Credit"
+    assert m.get(2) == "Remitter"
+    assert m.get(3) == "Debit"
+    assert m.get(4) == "Credit"
+
+
+def test_map_headers_remitter_not_remitter_bank():
+    """Đối tác (Remitter) is mapped; NH Đối tác / Remitter Bank is not mapped to Remitter."""
+    # Techcombank-style: col 1 = Đối tác (Remitter), col 2 = NH Đối tác (Remitter Bank)
+    m = _map_headers(["Ngày giao dịch", "Đối tác", "NH Đối tác", "Diễn giải", "Nợ TKTT", "Có TKTT"])
+    assert m.get(1) == "Remitter"
+    assert m.get(2) != "Remitter"  # Remitter Bank column not mapped to Remitter
 
 
 # --- _looks_like_header_row ---
@@ -220,7 +229,7 @@ def test_load_pdfs_to_dataframe_success_deduplicate():
     """One successful parse returns df and no failed; deduplicate runs."""
     with patch("src.services.pdf_parser.extract_transactions_from_pdf") as mock_extract:
         mock_extract.return_value = pd.DataFrame(
-            [["2025-12-01", "Pay", 50_000.0, 0.0, "checking"]],
+            [["2025-12-01", "Pay", "Acme", 50_000.0, 0.0, "checking"]],
             columns=TRANSACTION_COLUMNS,
         )
         df, failed = load_pdfs_to_dataframe([(b"pdf1", "checking")], deduplicate=True)
@@ -236,8 +245,8 @@ def test_extract_transactions_from_pdf_with_mock_table(mock_open):
     mock_page = MagicMock()
     mock_page.extract_tables.return_value = [
         [
-            ["Date", "Description", "Debit", "Credit"],
-            ["01/12/2025", "Test payment", "100,000", ""],
+            ["Date", "Description", "Remitter", "Debit", "Credit"],
+            ["01/12/2025", "Test payment", "Acme Corp", "100,000", ""],
         ]
     ]
     mock_pdf.pages = [mock_page]
@@ -250,6 +259,7 @@ def test_extract_transactions_from_pdf_with_mock_table(mock_open):
     assert df["Debit"].iloc[0] == 100_000.0
     assert df["SourceType"].iloc[0] == "checking"
     assert df["Description"].iloc[0] == "Test payment"
+    assert df["Remitter"].iloc[0] == "Acme Corp"
 
 
 @patch("src.services.pdf_parser.pdfplumber.open")

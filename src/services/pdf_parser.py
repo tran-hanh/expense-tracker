@@ -21,8 +21,18 @@ logger = logging.getLogger(__name__)
 # Avoid generic "amount" alone so single "Amount" column is not forced to Debit.
 DATE_ALIASES = ["date", "ngày", "ngay", "ngày giao dịch", "transaction date"]
 DESC_ALIASES = ["description", "nội dung", "noi dung", "diễn giải", "dien giai", "details", "chi tiết", "chi tiet", "content"]
-DEBIT_ALIASES = ["debit", "ghi nợ", "ghi no", "số tiền ghi nợ", "outflow", "phát sinh nợ", "phat sinh no", "ghi nợ (vnđ)"]
-CREDIT_ALIASES = ["credit", "ghi có", "ghi co", "số tiền ghi có", "inflow", "phát sinh có", "phat sinh co", "ghi có (vnđ)"]
+REMITTER_ALIASES = ["remitter", "đối tác", "doi tac", "partner", "người chuyển", "nguoi chuyen"]
+# Headers that mean "Remitter Bank" (NH Đối tác) — do not map these to Remitter.
+REMITTER_BANK_INDICATORS = ["remitter bank", "nh đối tác", "nh doi tac", "ngân hàng đối tác", "ngan hang doi tac"]
+
+
+def _is_remitter_bank_header(normalized: str) -> bool:
+    """True if this header is the Remitter Bank column (NH Đối tác), not the Remitter (partner) column."""
+    return any(ind in normalized for ind in REMITTER_BANK_INDICATORS)
+
+
+DEBIT_ALIASES = ["debit", "ghi nợ", "ghi no", "số tiền ghi nợ", "outflow", "phát sinh nợ", "phat sinh no", "ghi nợ (vnđ)", "nợ tktt"]
+CREDIT_ALIASES = ["credit", "ghi có", "ghi co", "số tiền ghi có", "inflow", "phát sinh có", "phat sinh co", "ghi có (vnđ)", "có tktt"]
 
 
 def _normalize_header(h: str) -> str:
@@ -92,7 +102,7 @@ def _parse_date(val, day_first: bool = True) -> pd.Timestamp | None:
 
 
 def _map_headers(headers: list) -> dict[int, str]:
-    """Map column index to standard name. Uses original indices only (no filtering)."""
+    """Map column index to standard name. Uses original header text when possible."""
     mapping = {}
     for i, h in enumerate(headers):
         n = _normalize_header(h)
@@ -101,13 +111,51 @@ def _map_headers(headers: list) -> dict[int, str]:
         for alias, std in [
             (DATE_ALIASES, "Date"),
             (DESC_ALIASES, "Description"),
+            (REMITTER_ALIASES, "Remitter"),
             (DEBIT_ALIASES, "Debit"),
             (CREDIT_ALIASES, "Credit"),
         ]:
             if any(a in n for a in alias):
+                if std == "Remitter" and _is_remitter_bank_header(n):
+                    continue  # Map Remitter Bank column to something else or leave unmapped
                 mapping[i] = std
                 break
     return mapping
+
+
+def _fallback_column_map(headers: list) -> dict[int, str]:
+    """
+    Fallback column mapping when we can't recognize headers from aliases.
+    Assumes a common layout: Date, Description, Debit, Credit in the first columns.
+    This is intentionally conservative and only used when _map_headers() finds nothing.
+    """
+    if not headers:
+        return {}
+    ncols = len(headers)
+    mapping: dict[int, str] = {}
+    if ncols >= 1:
+        mapping[0] = "Date"
+    if ncols >= 2:
+        mapping[1] = "Description"
+    if ncols >= 3:
+        mapping[2] = "Debit"
+    if ncols >= 4:
+        mapping[3] = "Credit"
+    return mapping
+
+
+def _transaction_map_complete(col_map: dict[int, str]) -> bool:
+    """True if col_map has at least Date and Debit (required to keep transaction rows)."""
+    vals = set(col_map.values()) if col_map else set()
+    return "Date" in vals and "Debit" in vals
+
+
+def _first_row_looks_like_data(headers: list) -> bool:
+    """True if first row looks like a data row (e.g. first cell is date-like), not a header."""
+    if not headers or not headers[0]:
+        return False
+    first_cell = str(headers[0]).strip()
+    return bool(re.match(r"^\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}", first_cell))
 
 
 def _looks_like_header_row(row: list) -> bool:
@@ -228,14 +276,18 @@ def extract_transactions_from_pdf(
             if not raw:
                 continue
             headers = raw[0]
-            col_map = _map_headers(headers)
-            # Continuation pages may have no header row; reuse previous page's map if column count matches.
-            # Layout is assumed identical—reordered columns would misassign data; we log for visibility.
             ncols = len(headers) if headers else 0
-            if not col_map and last_col_map and ncols >= len(last_col_map):
-                logger.debug("Reusing previous page column map for continuation page (ncols=%s)", ncols)
+            # Continuation page: first row is data (e.g. date in first cell), not a header. Reuse previous map.
+            if last_col_map and ncols >= len(last_col_map) and _first_row_looks_like_data(headers):
+                logger.debug("Continuation page (date-like first cell), reusing previous column map, ncols=%s", ncols)
                 col_map = {i: last_col_map[i] for i in last_col_map if i < ncols}
-            if not col_map:
+            else:
+                col_map = _map_headers(headers) or _fallback_column_map(headers)
+                # Partial/false match (e.g. only {3: 'Date'} from "ngay" in description): reuse last map if complete.
+                if last_col_map and ncols >= len(last_col_map) and not _transaction_map_complete(col_map):
+                    logger.debug("Reusing previous page column map (incomplete or false match), ncols=%s", ncols)
+                    col_map = {i: last_col_map[i] for i in last_col_map if i < ncols}
+            if not col_map or not _transaction_map_complete(col_map):
                 continue
             last_col_map = col_map
             for row_dict in _table_to_rows(raw, col_map):
@@ -251,25 +303,27 @@ def extract_transactions_from_pdf(
         for alias, std in [
             (DATE_ALIASES, "Date"),
             (DESC_ALIASES, "Description"),
+            (REMITTER_ALIASES, "Remitter"),
             (DEBIT_ALIASES, "Debit"),
             (CREDIT_ALIASES, "Credit"),
         ]:
             if any(a in n for a in alias):
+                if std == "Remitter" and _is_remitter_bank_header(n):
+                    continue
                 rename[c] = std
                 break
     df = df.rename(columns=rename)
 
-    for col in ["Date", "Description", "Debit", "Credit"]:
+    for col in ["Date", "Description", "Remitter", "Debit", "Credit"]:
         if col not in df.columns:
             df[col] = None
 
     df["Debit"] = df["Debit"].apply(_parse_vnd_amount)
     df["Credit"] = df["Credit"].apply(_parse_vnd_amount)
     df["Date"] = df["Date"].apply(lambda v: _parse_date(v, day_first=day_first))
-    # Normalize Description: nan, None, pd.NA -> empty string
-    df["Description"] = df["Description"].apply(
-        lambda x: "" if pd.isna(x) or x is None or str(x).strip().lower() in ("nan", "none") else str(x)
-    )
+    _str_col = lambda x: "" if pd.isna(x) or x is None or str(x).strip().lower() in ("nan", "none") else str(x)
+    df["Description"] = df["Description"].apply(_str_col)
+    df["Remitter"] = df["Remitter"].apply(_str_col)
 
     # Keep rows with non-zero Debit (outflows and refunds)
     df = df[df["Debit"] != 0].copy()
@@ -312,8 +366,6 @@ def load_pdfs_to_dataframe(
         return pd.DataFrame(columns=TRANSACTION_COLUMNS), failed
     out = pd.concat(dfs, ignore_index=True)
     if deduplicate and not out.empty:
-        out = out.drop_duplicates(
-            subset=["Date", "Description", "Debit", "Credit", "SourceType"],
-            keep="first",
-        ).reset_index(drop=True)
+        subset = [c for c in TRANSACTION_COLUMNS if c in out.columns]
+        out = out.drop_duplicates(subset=subset, keep="first").reset_index(drop=True)
     return out, failed
