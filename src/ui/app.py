@@ -81,7 +81,11 @@ def get_month_options() -> list[str]:
 def get_sidebar_inputs() -> tuple[list[tuple[bytes, str]], str]:
     """Collect uploaded files (bytes, source_type) and custom exclusions text. Returns (files_with_type, custom_exclusions)."""
     st.sidebar.header("Upload statements")
-    st.sidebar.caption("Use one or both: Checking only, Credit card only, or both.")
+    st.sidebar.caption(
+        "Upload Techcombank PDF statements. You can use one or both: "
+        "Checking only, Credit card only, or both.\n\n"
+        "On mobile: after tapping the uploader, choose **Browse** to pick a PDF from Files / iCloud."
+    )
     st.sidebar.subheader("Checking account PDFs")
     checking_files = st.sidebar.file_uploader(
         "Checking account statements",
@@ -104,6 +108,15 @@ def get_sidebar_inputs() -> tuple[list[tuple[bytes, str]], str]:
         for f in credit_files:
             files_with_type.append((f.read(), "credit_card"))
     st.sidebar.divider()
+    # Quick summary of selected files for user feedback
+    if files_with_type:
+        num_checking = sum(1 for _, t in files_with_type if t == "checking")
+        num_cc = sum(1 for _, t in files_with_type if t == "credit_card")
+        st.sidebar.info(
+            f"Selected {num_checking} checking PDF(s) and {num_cc} credit card PDF(s).",
+            icon="📄",
+        )
+
     st.sidebar.subheader("Custom exclusions")
     custom_exclusions = st.sidebar.text_input(
         "Custom exclusions (comma-separated)",
@@ -305,7 +318,10 @@ def main() -> None:
     init_session_state()
 
     st.title("Bank Statement Expense Analyzer")
-    st.caption("Upload Techcombank PDFs (Checking & Credit Card), filter by rules, and view monthly living expenses.")
+    st.caption(
+        "Upload Techcombank PDFs (Checking & Credit Card), apply expense rules, and view monthly living expenses.\n\n"
+        "Tip: On iPhone, after tapping the upload box, choose **Browse** to select a PDF from Files / iCloud."
+    )
 
     files_with_type, custom_exclusions = get_sidebar_inputs()
 
@@ -314,6 +330,17 @@ def main() -> None:
         if not files_with_type and st.session_state.raw_all is None:
             st.info("Upload Checking and/or Credit card PDF statements in the sidebar to get started.")
         return
+
+    # Show a small summary of loaded data (rows + date range) to orient the user
+    raw = st.session_state.raw_all
+    if raw is not None and not raw.empty and "Date" in raw.columns:
+        df_dates = pd.to_datetime(raw["Date"], errors="coerce").dropna()
+        if not df_dates.empty:
+            start, end = df_dates.min(), df_dates.max()
+            st.caption(
+                f"Loaded **{len(raw)}** transactions from **{start:%d/%m/%Y}** to **{end:%d/%m/%Y}** "
+                "across all uploaded statements."
+            )
 
     month_options = get_month_options()
     selected_month = st.selectbox("Month / Year", options=month_options, key="month_filter")
@@ -331,6 +358,7 @@ def main() -> None:
         return
 
     st.divider()
+    st.subheader(f"Expenses for {selected_month}")
     _render_expense_editor_and_totals()
     # First load: total not yet set by editor; show from valid_df
     if st.session_state.display_total is None:
