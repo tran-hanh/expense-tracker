@@ -13,6 +13,11 @@ persona:
     - "DOCUMENTATION MANDATE: Whenever modifying existing logic, adding a rule, or changing the app's behavior, you MUST automatically update `README.md` to reflect these changes."
     - "Enforce Clean Architecture: separate UI (src/ui), Business Logic (src/core), and Infrastructure (src/services)."
 
+critical_actions:
+  - "Always verify test coverage >= 90% before marking tasks complete"
+  - "When adding new filtering rules, update both filter_rules.py AND README.md"
+  - "When parsing PDFs, ensure Remitter column is properly handled (not Remitter Bank)"
+
 memories:
   - "This project is a Streamlit web app that parses Techcombank PDF statements to calculate monthly living expenses."
   - "Rule 1: Filter OUT transactions >= 100,000,000 VND."
@@ -21,6 +26,11 @@ memories:
   - "Rule 4: Specific month exclusions (Dec 2025, Jan 2026, Feb 2026 names) must be maintained."
   - "Test structure MUST be: 'tests/unit/', 'tests/integration/', 'tests/e2e/'."
   - "Coverage MUST be configured in pyproject.toml to fail if under 90%."
+  - "Project uses Clean Architecture: src/ui/ (Streamlit), src/core/ (business logic), src/services/ (PDF parsing)."
+  - "PDF parser handles Techcombank statements with columns: Date, Description, Remitter, Debit, Credit, SourceType."
+  - "Remitter column contains partner name (Đối tác), NOT Remitter Bank (NH Đối tác)."
+  - "User can exclude transactions via sidebar custom exclusions (keywords or exact amounts)."
+  - "Valid expenses table has interactive checkboxes for dynamic expense calculation."
 
 menu:
   - trigger: "refactor-clean"
@@ -32,3 +42,24 @@ menu:
   - trigger: "feature-update"
     action: "I will provide a new feature or change request. You MUST follow this sequence: 1. Write/Update tests (Red), 2. Implement code (Green), 3. Update README.md with the new behavior."
     description: "[FU] Add feature with TDD & Docs update"
+  - trigger: "add-filter-rule"
+    action: "Add a new filtering rule. Guide user through: 1. Determine if it's global or month-specific, 2. Add to filter_rules.py with test, 3. Update README.md, 4. Verify coverage."
+    description: "[AFR] Add Filtering Rule (TDD)"
+  - trigger: "parse-pdf-fix"
+    action: "Debug PDF parsing issues. Check: 1. Column mapping (Date, Description, Remitter, Debit, Credit), 2. Header recognition, 3. Remitter vs Remitter Bank distinction, 4. Test with sample PDFs."
+    description: "[PDF] Fix PDF Parsing Issues"
+  - trigger: "coverage-check"
+    action: "Run pytest with coverage report and verify >= 90%. If below, identify missing tests and add them."
+    description: "[COV] Check Test Coverage"
+
+prompts:
+  - id: tdd-workflow
+    content: |
+      When implementing any feature:
+      1. RED: Write failing test first (unit test in tests/unit/)
+      2. GREEN: Write minimum code to pass
+      3. REFACTOR: Improve code quality while keeping tests green
+      4. DOCS: Update README.md with new behavior
+      5. VERIFY: Run pytest --cov to ensure >= 90% coverage
+      
+      Never skip tests. Never mark complete without coverage verification.
