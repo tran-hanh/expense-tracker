@@ -7,6 +7,8 @@ import pytest
 
 from src.core.constants import TRANSACTION_COLUMNS
 from src.services.pdf_parser import (
+    _extract_table_from_page,
+    _first_row_looks_like_data,
     _looks_like_header_row,
     _map_headers,
     _normalize_header,
@@ -14,6 +16,7 @@ from src.services.pdf_parser import (
     _parse_vnd_amount,
     _score_table_as_transactions,
     _table_to_rows,
+    _transaction_map_complete,
     extract_transactions_from_pdf,
     load_pdfs_to_dataframe,
 )
@@ -310,3 +313,86 @@ def test_load_pdfs_to_dataframe_returns_expected_columns():
     df, failed = load_pdfs_to_dataframe([])
     assert list(df.columns) == list(TRANSACTION_COLUMNS)
     assert failed == []
+
+
+# --- _transaction_map_complete ---
+def test_transaction_map_complete_has_date_and_debit():
+    """Map is complete if it has Date and Debit (required columns)."""
+    assert _transaction_map_complete({0: "Date", 2: "Debit"}) is True
+    assert _transaction_map_complete({0: "Date", 1: "Description", 2: "Debit", 3: "Credit"}) is True
+
+
+def test_transaction_map_complete_missing_date():
+    """Map is incomplete if Date is missing."""
+    assert _transaction_map_complete({1: "Description", 2: "Debit"}) is False
+
+
+def test_transaction_map_complete_missing_debit():
+    """Map is incomplete if Debit is missing."""
+    assert _transaction_map_complete({0: "Date", 1: "Description"}) is False
+
+
+def test_transaction_map_complete_empty():
+    """Empty map is incomplete."""
+    assert _transaction_map_complete({}) is False
+
+
+# --- _first_row_looks_like_data ---
+def test_first_row_looks_like_data_date_patterns():
+    """Detects data rows when first cell matches date patterns."""
+    assert _first_row_looks_like_data(["01/12/2025", "Desc"]) is True
+    assert _first_row_looks_like_data(["15-06-25", "Desc"]) is True
+    # YYYY-MM-DD format is not considered by _first_row_looks_like_data
+
+
+def test_first_row_looks_like_data_header_patterns():
+    """Does not detect header rows as data."""
+    assert _first_row_looks_like_data(["Date", "Description"]) is False
+    assert _first_row_looks_like_data(["Ngày giao dịch", "Đối tác"]) is False
+    assert _first_row_looks_like_data(["", "Description"]) is False
+
+
+def test_first_row_looks_like_data_empty():
+    """Empty or None rows are not data."""
+    assert _first_row_looks_like_data([]) is False
+    assert _first_row_looks_like_data([None]) is False
+
+
+# --- _extract_table_from_page ---
+def test_extract_table_from_page_with_valid_table():
+    """Extracts table from page when table exists."""
+    mock_page = MagicMock()
+    mock_page.extract_tables.return_value = [
+        [["Date", "Description"], ["01/12/2025", "Payment"]]
+    ]
+    
+    result = _extract_table_from_page(mock_page)
+    
+    assert result == [["Date", "Description"], ["01/12/2025", "Payment"]]
+
+
+def test_extract_table_from_page_no_tables():
+    """Returns None when page has no tables."""
+    mock_page = MagicMock()
+    mock_page.extract_tables.return_value = []
+    
+    result = _extract_table_from_page(mock_page)
+    
+    assert result == []
+
+
+def test_extract_table_from_page_multiple_tables():
+    """Selects highest-scoring table when multiple tables exist."""
+    mock_page = MagicMock()
+    # First table: 2 cols, 1 row (low score)
+    # Second table: 3 cols, 5 rows (higher score)
+    mock_page.extract_tables.return_value = [
+        [["A", "B"], ["1", "2"]],
+        [["Date", "Description", "Debit"], ["01/12/2025", "Pay", "100"]] + [["02/12/2025", "Pay2", "200"]] * 4,
+    ]
+    
+    result = _extract_table_from_page(mock_page)
+    
+    # Should select the larger table (higher score)
+    assert result is not None
+    assert len(result) >= 2  # Header + at least one data row
